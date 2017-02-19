@@ -1,14 +1,15 @@
 
 lossLogger = optim.Logger(paths.concat(opt.save, 'loss.log'))
-lossLogger:setNames{'% mean loss (train set)', '% mean loss (val set)'}
-lossLogger:style{'+-', '+-'}
+lossLogger:setNames{'% mean loss (train set)', '%reg loss', '%conf loss' , '%class loss', '%neg loss'}
+lossLogger:style{'+-', '+-', '+-', '+-', '+-'}
 lossLogger.showPlot = false
 
-reg_accuracyLogger = optim.Logger(paths.concat(opt.save, 'reg_accuracy.log'))
-reg_accuracyLogger:setNames{'% regression accuracy (train set)', '% regression accuracy (val set)'}
-reg_accuracyLogger:style{'+-', '+-'}
-reg_accuracyLogger.showPlot = false
+accuracyLogger = optim.Logger(paths.concat(opt.save, 'accuracy.log'))
+accuracyLogger:setNames{'% regression accuracy', '% classification accuracy', '% confidence accuracy'}
+accuracyLogger:style{'+-', '+-', '+-'}
+accuracyLogger.showPlot = false
 
+--[[
 false_posLogger = optim.Logger(paths.concat(opt.save, 'false_pos.log'))
 false_posLogger:setNames{'% false positives (train set)', '% false positives (val set)'}
 false_posLogger:style{'+-', '+-'}
@@ -43,6 +44,7 @@ class_lossLogger = optim.Logger(paths.concat(opt.save, 'class_loss.log'))
 class_lossLogger:setNames{'% class loss (train set)', '% class loss (val set)'}
 class_lossLogger:style{'+-', '+-'}
 class_lossLogger.showPlot = false
+]]--
 
 train_loss = 0
 train_reg_accuracy = 0
@@ -66,10 +68,15 @@ val_reg = 0
 val_conf = 0
 val_neg = 0
 
+confidence = 0
+classification = 0
+confidence_accuracy = 0
+classification_accuracy = 0
+
 learning_rate_shedule = {}
 
 local loss_dir = paths.concat(opt.save, 'loss.png')      
-local reg_accuracy_dir = paths.concat(opt.save, 'reg_accuracy.png')
+local accuracy_dir = paths.concat(opt.save, 'accuracy.png')
 local false_pos_dir = paths.concat(opt.save, 'false_pos.png') 
 local false_neg_dir = paths.concat(opt.save, 'false_neg.png')
 local corr_class_dir = paths.concat(opt.save, 'corr_class.png')
@@ -80,10 +87,11 @@ local class_loss_dir = paths.concat(opt.save, 'class_loss.png')
 
 function logging()
 
-    lossLogger:add{train_loss, val_loss}
+    lossLogger:add{train_loss, e_reg, e_conf, e_class, e_neg}
     lossLogger:plot()
-    reg_accuracyLogger:add{train_reg_accuracy, val_reg_accuracy}
-    reg_accuracyLogger:plot()
+    accuracyLogger:add{train_reg_accuracy, classification_accuracy, confidence_accuracy}
+    accuracyLogger:plot()
+    --[[
     false_posLogger:add{train_false_pos, val_false_pos}
     false_posLogger:plot()
     false_negLogger:add{train_false_neg, val_false_neg}
@@ -98,13 +106,15 @@ function logging()
     neg_lossLogger:plot()
     class_lossLogger:add{e_class, val_class}
     class_lossLogger:plot()
+    ]]--
 end
 
 
 function writeReport()
 
   os.execute(('convert -density 200 %sloss.log.eps %sloss.png'):format(opt.save,opt.save))
-  os.execute(('convert -density 200 %sreg_accuracy.log.eps %sreg_accuracy.png'):format(opt.save,opt.save))
+  os.execute(('convert -density 200 %saccuracy.log.eps %saccuracy.png'):format(opt.save,opt.save))
+  --[[
   os.execute(('convert -density 200 %sfalse_pos.log.eps %sfalse_pos.png'):format(opt.save,opt.save))
   os.execute(('convert -density 200 %sfalse_neg.log.eps %sfalse_neg.png'):format(opt.save,opt.save))
   os.execute(('convert -density 200 %scorr_class.log.eps %scorr_class.png'):format(opt.save,opt.save))
@@ -112,7 +122,8 @@ function writeReport()
   os.execute(('convert -density 200 %sconf_loss.log.eps %sconf_loss.png'):format(opt.save,opt.save))
   os.execute(('convert -density 200 %sneg_loss.log.eps %sneg_loss.png'):format(opt.save,opt.save))
   os.execute(('convert -density 200 %sclass_loss.log.eps %sclass_loss.png'):format(opt.save,opt.save))
-
+  ]]--
+  
   local file = io.open(opt.save..'report.html','w')
   file:write(([[
       <!DOCTYPE html>

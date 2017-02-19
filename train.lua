@@ -38,9 +38,12 @@ local function paramsForEpoch(epoch)
     end
     local regimes = {
         -- start, end,    LR,   WD,
-        {  1,     3000,   1e-3,   5e-4 },
-        { 3001,     100000,   1e-2,   5e-4  },
-        { 100001,     140000,   1e-3,   5e-4  },
+        {  1,     10000,   1e-4,   5e-4 },
+        { 10001,     15000,   5e-5,   5e-4  },
+        { 15001,     20000,   1e-5,   5e-4  },
+        { 3000,     5000,   1e-3,   5e-4  },
+        { 5001,     10000,   1e-2,   5e-4  },
+        { 10001,     14000,   1e-3,   5e-4  },
         { 290190,     1000000,   1e-4,   5e-4  },
         { 306310,     1000000,   1e-4,   5e-4 },
        -- { 4,     4,   5e-3,   5e-4 },
@@ -76,6 +79,8 @@ local ex_boxes = {}
 local gt_boxes = {}
 local list_ims = {}
 local firstImages 
+local batch_class_accuracy = 0
+local batch_confidence_accuracy = 0
 
 -- 3. train - this function handles the high-level training loop,
 function train()
@@ -87,6 +92,8 @@ function train()
    gt_boxes = {}
    list_ims = {}
    firstImages = true
+   confidence_accuracy = 0
+   classification_accuracy = 0
 
    batchNumber = 0
    cutorch.synchronize()
@@ -111,20 +118,15 @@ function train()
     if t == 0 then
       t = 1
     end
-    
+
     local params, newRegime, shed = paramsForEpoch(t)
     learning_rate_shedule = shed
    
     if newRegime then
-      optimState = {
-         learningRate = params.learningRate,
-         learningRateDecay = 0.0,
-         momentum = opt.momentum,
-         dampening = 0.0,
-         weightDecay = params.weightDecay
-      }
+      optimState.learningRate = params.learningRate
+      optimState.weightDecay = params.weightDecay
+      
     end
-    print(optimState.learningRate)
     
     local im, correction = loadTrainBatch()     
     trainBatch(im, correction)
@@ -140,11 +142,14 @@ function train()
    e_reg = e_reg / epochL
    e_conf = e_conf / epochL
    e_neg = e_neg / epochL
+   classification_accuracy = classification_accuracy / epochL
+   confidence_accuracy = confidence_accuracy / epochL
 
    print(string.format('Epoch: [%d][TRAINING SUMMARY] Total Time(s): %.2f\t'
                           .. 'average loss (per batch): %.2f \t ',
                        epoch, tm:time().real, train_loss))
    print(('Class Err %.4f Reg Err %.4f Conf Err %.4f  Neg Err %.4f'):format( e_class, e_reg, e_conf, e_neg)) 
+   print(('Class Accuracy %.2f Reg Accuracy %.2f Conf Accuracy %.2f'):format( classification_accuracy, train_reg_accuracy, confidence_accuracy)) 
    print('\n')
 
    -- save model
@@ -185,6 +190,9 @@ function trainBatch(imageCPU, correction)
    local dataLoadingTime = dataTimer:time().real
    timer:reset()
 
+  batch_class_accuracy = 0
+  batch_confidence_accuracy = 0
+  
    -- transfer over to GPU
    inputs:resize(imageCPU:size()):copy(imageCPU)
 
@@ -211,7 +219,8 @@ function trainBatch(imageCPU, correction)
         correct_outputs[i]:copy(temp2:cuda())
         positive_indexes[i]:copy(temp3:cuda())
         --labels_output[i]:copy(correction[i][7]:cuda())
-
+        batch_class_accuracy = batch_class_accuracy + classification
+        batch_confidence_accuracy = batch_confidence_accuracy + confidence
         --print(torch.sum(positive_indexes:eq(3)))
         
         if numImages <= 12 then
@@ -222,6 +231,8 @@ function trainBatch(imageCPU, correction)
         
       end
       
+      batch_class_accuracy = batch_class_accuracy / #correction
+      batch_confidence_accuracy = batch_confidence_accuracy / #correction
       --print(torch.sum(positive_indexes:eq(3)))
       local crit_out = {}
       local crit_corr = {}
@@ -269,14 +280,6 @@ function trainBatch(imageCPU, correction)
       -- transform gradOutput back to original size
       gradOutputs:resize(outputs:size()):fill(0)
       
-      --print(positive_indexes:size())
-      --print(gradOutputs:size())
-      --print(gradOut)
-      --print(torch.sum(positive_indexes:eq(1)))
-      --print(torch.sum(positive_indexes:eq(2)))
-      --print(torch.sum(positive_indexes:eq(3)))
-      --print(torch.sum(positive_indexes:eq(4)))
-      
       gradOutputs[positive_indexes:eq(1)] = gradOut[1]
       gradOutputs[positive_indexes:eq(3)] = gradOut[2]
       gradOutputs[positive_indexes:eq(4)] = gradOut[3]
@@ -295,9 +298,11 @@ function trainBatch(imageCPU, correction)
    e_class = e_class + err_class
    e_conf = e_conf + err_conf
    e_neg = e_neg + err_neg
+   confidence_accuracy = confidence_accuracy + batch_confidence_accuracy
+   classification_accuracy = classification_accuracy + batch_class_accuracy
 
    -- Calculate top-1 error, and print information
-   print(('Epoch: [%d][%d/%d]\tTime %.3f Err %.4f LR %.0e DataLoadingTime %.3f'):format( epoch, batchNumber, epochL, timer:time().real, err, optimState.learningRate, dataLoadingTime))
+   print(('Epoch: [%d][%d/%d]\tTime %.3f Err %.4f LR %.0e CL_ACC: %.2f CO_ACC: %.2f DataLoadingTime %.3f'):format( epoch, batchNumber, epochL, timer:time().real, err, optimState.learningRate, batch_class_accuracy, batch_confidence_accuracy, dataLoadingTime))
    --print(('e_reg: %.4f e_class: %.4f e_conf: %.4f e_neg: %.4f'):format(e_reg, e_class, e_conf, e_neg ))
    
    if numImages >= 12 and firstImages then

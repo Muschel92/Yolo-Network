@@ -35,7 +35,7 @@ function M.parse(arg)
     ------------- Training options --------------------
     cmd:option('-do_validation',         false,    'If validation should be calculated')
     cmd:option('-nEpochs',         135,    'Number of total epochs to run')
-    cmd:option('-epochSize',       1000, 'Number of batches per epoch')
+    cmd:option('-epochSize',       100, 'Number of batches per epoch')
     cmd:option('-epochNumber',     1,     'Manual epoch number (useful on restarts)')
     cmd:option('-batchSize',       8,   'mini-batch size (1 = pure stochastic)')
     
@@ -45,13 +45,13 @@ function M.parse(arg)
     cmd:option('-weightDecay',     5e-4, 'weight decay')
     
     ---------- Loss Options -----------------------------------
-    cmd:option('-reg_loss',     10, 'weight for regression loss')
+    cmd:option('-reg_loss',     5, 'weight for regression loss')
     cmd:option('-conf_loss',     1, 'weight for confidence loss')
     cmd:option('-neg_loss',     0.5, 'weight for negative confidence loss')
     cmd:option('-class_loss',     1, 'weight for classification loss')
     
     ---------- Model options ----------------------------------
-    cmd:option('-netType',     'res_yolo_type8', 'Options: alexnet | overfeat | alexnetowtbn | vgg | googlenet')
+    cmd:option('-netType',     'res_yolo_type10', 'Options: alexnet | overfeat | alexnetowtbn | vgg | googlenet')
     cmd:option('-netPath',     '/data/ethierer/ObjectDetection/YOLO_Network/model/', 'Path to the Yolo model')
     cmd:option('-retrain',     'none', 'provide path to model to retrain with')
     cmd:option('-new_model',     false, 'if a new model should be created')

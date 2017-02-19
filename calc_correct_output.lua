@@ -18,7 +18,8 @@ local class_idx = torch.range(opt.boxes_per_grid * 5 +1, opt.boxes_per_grid * 5 
 
 
 function calculate_correct_output(output, correction)
-  
+  confidence = 0
+  classification = 0
   -- set class output to zero for non-object positions
   output[{{},{}, {opt.boxes_per_grid *5 + 1, output:size(3)}}][torch.eq(correction[4], 0)] = 0
 
@@ -27,11 +28,9 @@ function calculate_correct_output(output, correction)
   
   -- set index for positive objects to 1
   pos_rois[{{},{},{opt.boxes_per_grid*5 +1, output:size(3)}}] = 1
-  -- set index for confidence to 2
-  pos_rois:indexFill(3,conf_idx, 2)
   
-  -- set the non-correct classes of correction to zero
-  correction[4][correction[4]:eq(2)] = 0
+  -- set index for confidence scores to 2
+  pos_rois:indexFill(3,conf_idx, 2)
   
   -- correct output
   local correct_output = torch.Tensor(output:size()):fill(0)
@@ -81,6 +80,20 @@ function calculate_correct_output(output, correction)
   -- the actual boxes of the grid cells
   local boxes= torch.zeros(nr_of_pos_boxes * opt.boxes_per_grid, 4)
   
+  -- extract classification results
+  local pos_classification = output[{{},{}, {opt.boxes_per_grid *5 + 1, output:size(3)}}][torch.ne(correction[4], 0)]
+  pos_classification:resize(nr_of_pos_positions, opt.nClasses)
+  
+  -- extract classification correction
+  local pos_class_corr = correction[4][correction[4]:gt(0)]
+  pos_class_corr:resize(nr_of_pos_positions, opt.nClasses)
+  pos_class_corr[pos_class_corr:eq(2)] = 0
+  
+  local max_ex, max_ex_idx = torch.max(pos_classification, 2)
+  local max_corr, max_corr_idx = torch.max(pos_class_corr,2)
+  classification = classification  + torch.sum(max_corr_idx:eq(max_ex_idx))
+  -- set the non-correct classes of correction to zero
+  correction[4][correction[4]:eq(2)] = 0
   
   for i = 1, opt.boxes_per_grid do
     
@@ -173,6 +186,9 @@ function calculate_correct_output(output, correction)
         correct_output[{correction[5][pos_box_idx[index]], correction[6][pos_box_idx[index]], idx1[1] *5}] = o1[1]
         correct_output[{correction[5][pos_box_idx[index + 1]], correction[6][pos_box_idx[index + 1]], idx2[1] *5}] = o2[1]
       
+      -- calculate average confidence
+        confidence = confidence + output[{correction[5][pos_box_idx[index]], correction[6][pos_box_idx[index]], idx1[1] *5}]
+        confidence = confidence + output[{correction[5][pos_box_idx[index + 1]], correction[6][pos_box_idx[index + 1]], idx2[1] *5}]
         index = index +2
       
       else
@@ -192,12 +208,22 @@ function calculate_correct_output(output, correction)
       
         -- copy the correct confidence as the IoU
         correct_output[{correction[5][pos_box_idx[i]], correction[6][pos_box_idx[i]], idx[1] *5}] = o[1]
-        
+        confidence = confidence + output[{correction[5][pos_box_idx[i]], correction[6][pos_box_idx[i]], idx[1] *5}]
+      
         box_index[index] = (index -1) * opt.boxes_per_grid + idx[1]
         
         index = index +1
       end
   end
+  
+  if nr_of_pos_boxes > 0 then
+    confidence = confidence / nr_of_pos_boxes
+  end
+  
+  if nr_of_pos_positions > 0 then
+    classification = classification / nr_of_pos_positions
+  end
+  
   -- set the output to zero if its not needed
   output[torch.eq(pos_rois,0)] = 0
   ex_boxes = ex_boxes:index(1, box_index)
