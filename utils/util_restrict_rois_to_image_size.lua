@@ -1,3 +1,9 @@
+  -- function to restrict a bounding box to the size of the image
+  --values less than 1 set to 1
+  --values greater than image size set to image height
+  --upper value smaller than lower value set to lower value
+  
+
 function restrict_rois_to_image_size(ex_boxes, image_size)
   
   ex_boxes[{{},1}][ex_boxes[{{},1}]:lt(1)] = 1  

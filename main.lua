@@ -4,6 +4,8 @@ require 'paths'
 require 'xlua'
 require 'optim'
 require 'nn'
+require 'cudnn'
+require 'cunn'
 
 dofile('utils/util_calc_box_from_reg.lua')
 dofile('utils/util_calc_grid_index.lua')
@@ -13,6 +15,8 @@ dofile('utils/util_flip_rois.lua')
 dofile('utils/util_scale_rois.lua')
 dofile('utils/util_restrict_rois_to_image_size.lua')
 dofile('utils/util_img_from_mean.lua')
+dofile('utils/util_box_size.lua')
+dofile('utils/util_binaryToIdx.lua')
 dofile('prepare_image_roidb.lua')
 
 torch.setdefaulttensortype('torch.FloatTensor')
@@ -33,7 +37,9 @@ print(opt)
 cutorch.setDevice(opt.GPU) -- by default, use GPU 1
 torch.manualSeed(opt.manualSeed)
 
+print('==> load Data')
 paths.dofile('data.lua')
+print('Loaded data')
 paths.dofile('donkey.lua')
 paths.dofile('logger.lua')
 paths.dofile('calc_correct_output.lua')

@@ -8,13 +8,6 @@
 --
 require 'optim'
 
---[[
-   1. Setup SGD optimization state and learning rate schedule
-   2. Create loggers.
-   3. train - this function handles the high-level training loop,
-              i.e. load data, train model, save model and state to disk
-   4. trainBatch - Used by train() to train a single batch after the data is loaded.
-]]--
 
 -- Setup a reused optimization state (for sgd). If needed, reload it from disk
 optimState = {
@@ -23,7 +16,8 @@ optimState = {
     momentum = opt.momentum,
     dampening = 0.0,
     weightDecay = opt.weightDecay,
-    nesterov = true
+    nesterov = true,
+    evalCounter = 0
 }
 
 
@@ -44,12 +38,15 @@ local function paramsForEpoch(epoch)
     end
     local regimes = {
         -- start, end,    LR,   WD,
-        {  1,     6,   5e-4,   5e-4 },
-        { 7,     12,   1.25e-3,   5e-4  },
-        { 13,     18,   2.5e-3,   5e-4 },
-        { 18,     500,   5e-3,   5e-4 },
-        { 501,    750,   5e-4,   5e-4 },
-        { 751,    1000,   5e-5,   5e-4 },
+        {  1,     3000,   1e-3,   5e-4 },
+        { 3001,     100000,   1e-2,   5e-4  },
+        { 100001,     140000,   1e-3,   5e-4  },
+        { 290190,     1000000,   1e-4,   5e-4  },
+        { 306310,     1000000,   1e-4,   5e-4 },
+       -- { 4,     4,   5e-3,   5e-4 },
+        --{ ,     500,   1e-2,   5e-4 },
+        { 501,    750,   1e-3,   5e-4 },
+        { 751,    1000,   1e-4,   5e-4 },
     }
 
     for _, row in ipairs(regimes) do
@@ -72,9 +69,6 @@ local function generate_batch_roidbs(files, images)
 end 
 
 
--- 2. Create loggers.
---trainLogger = optim.Logger(paths.concat(opt.save, 'train.log'))
-
 local batchNumber
 local loss_epoch
 local numImages
@@ -84,7 +78,6 @@ local list_ims = {}
 local firstImages 
 
 -- 3. train - this function handles the high-level training loop,
---            i.e. load data, train model, save model and state to disk
 function train()
    print('==> doing epoch on training data:')
    print("==> online epoch # " .. epoch)
@@ -94,19 +87,7 @@ function train()
    gt_boxes = {}
    list_ims = {}
    firstImages = true
-   
-   local params, newRegime, shed = paramsForEpoch(epoch)
-   learning_rate_shedule = shed
-   if newRegime then
-      optimState = {
-         learningRate = params.learningRate,
-         learningRateDecay = 0.0,
-         momentum = opt.momentum,
-         dampening = 0.0,
-         weightDecay = params.weightDecay
-      }
-   end
-   
+
    batchNumber = 0
    cutorch.synchronize()
 
@@ -117,46 +98,40 @@ function train()
     e_class = 0
     e_conf = 0
     e_neg = 0
-    
-   indices = torch.randperm(#image_roidb_train):long():split(opt.batchSize)
-   
-   if (#image_roidb_train % opt.batchSize ~= 0) then
-    indices[#indices] = nil
-   end
    
    epochL = opt.epochSize
-   
-   if opt.epochSize > #indices then
-     epochL = #indices
-   end
       
    local tm = torch.Timer()
    loss_epoch = 0
    train_reg_accuracy = 0
    
-   for t,v in ipairs(indices) do
-      
-      local roidbs = generate_batch_roidbs(v, image_roidb_train)   
-      local im, correction = loadTrainBatch(roidbs)
-      
-     trainBatch(im, correction)
-      --[[donkeys:addjob(
-         -- the job callback (runs in data-worker thread)
-         function()
-           print(image_roidb_train)
-            local roidbs = generate_batch_roidbs(v, image_roidb_train)   
-            local correction = loadTrainBatch(roidbs)
-            return correction
-         end,
-         -- the end callback (runs in the main thread)
-         trainBatch
-      )]]--
-    
-    if t == epochL then
-      break
+   for i = 1, epochL do
+            
+    local t = optimState.evalCounter 
+    if t == 0 then
+      t = 1
     end
+    
+    local params, newRegime, shed = paramsForEpoch(t)
+    learning_rate_shedule = shed
+   
+    if newRegime then
+      optimState = {
+         learningRate = params.learningRate,
+         learningRateDecay = 0.0,
+         momentum = opt.momentum,
+         dampening = 0.0,
+         weightDecay = params.weightDecay
+      }
+    end
+    print(optimState.learningRate)
+    
+    local im, correction = loadTrainBatch()     
+    trainBatch(im, correction)
+    
    end 
-   donkeys:synchronize()
+   
+   --donkeys:synchronize()
    cutorch.synchronize()
 
    train_loss = loss_epoch / epochL
@@ -190,6 +165,7 @@ local inputs = torch.CudaTensor()
 local targets = torch.CudaTensor()
 local correct_outputs = torch.CudaTensor()
 local positive_indexes = torch.CudaTensor()
+local labels_output = torch.CudaTensor()
 local gradOutputs = torch.CudaTensor()
 local err_reg = 0
 local err_class = 0
@@ -221,101 +197,93 @@ function trainBatch(imageCPU, correction)
       --print('Outputs')
       --print(torch.sum(outputs:ne(outputs)))
       
-      correct_outputs:resize(outputs:size())
-      positive_indexes:resize(outputs:size())
+      -- resize correction container to output size
+      correct_outputs:resize(outputs:size()):fill(0)
+      positive_indexes:resize(outputs:size()):fill(0)
+      labels_output:resize(outputs:size(1), outputs:size(2), outputs:size(3)):fill(0)
       
       -- for every image in batch
       for i =1, #correction do
         numImages = numImages + 1
-        outputs[i], correct_outputs[i], positive_indexes[i], temp = calculate_correct_output(outputs[i], correction[i])  
+        local temp1, temp2, temp3, temp4 = calculate_correct_output(outputs[i]:float(), correction[i]) 
+        --print(torch.sum(temp3:eq(3)))
+        outputs[i]:copy(temp1:cuda())
+        correct_outputs[i]:copy(temp2:cuda())
+        positive_indexes[i]:copy(temp3:cuda())
+        --labels_output[i]:copy(correction[i][7]:cuda())
+
+        --print(torch.sum(positive_indexes:eq(3)))
+        
         if numImages <= 12 then
-          table.insert(ex_boxes, temp)
+          table.insert(ex_boxes, temp4)
           table.insert(gt_boxes, correction[i][2])
           table.insert(list_ims, torch.Tensor(inputs[i]:size()):copy(inputs[i]))
         end
+        
       end
       
+      --print(torch.sum(positive_indexes:eq(3)))
       local crit_out = {}
       local crit_corr = {}
       
       -- labels
-      --print('labels')
       local labels_out = outputs[positive_indexes:eq(1)]
-      labels_out:resize(opt.batchSize, opt.grid_size[1] * opt.grid_size[2] , opt.nClasses)
-      table.insert(crit_out, labels_out)
-      
+      labels_out:resize(opt.batchSize, opt.grid_size[1] , opt.grid_size[2] , opt.nClasses)
+      --print(labels_out:size())
+      --labels_out = labels_out:permute(1,4,2,3):contiguous()
+      table.insert(crit_out, labels_out)      
       local labels_corr = correct_outputs[positive_indexes:eq(1)]
       labels_corr:resize(opt.batchSize, opt.grid_size[1] * opt.grid_size[2] , opt.nClasses)
       table.insert(crit_corr, labels_corr)
-      
-      local temp = nn.MSECriterion():cuda()
-      err_class = temp:forward(labels_out, labels_corr)
-      class_grad = temp:backward(labels_out, labels_corr)
-      --print(torch.max(class_grad))
+      e_class = crit1:forward(labels_out, labels_corr)
       
       -- regression
-      --print('reg')
       local reg_out = outputs[positive_indexes:eq(3)]
       reg_out:resize((reg_out:size(1) / 4), 4)
-      table.insert(crit_out, reg_out)
-      
+      table.insert(crit_out, reg_out)      
       local reg_corr = correct_outputs[positive_indexes:eq(3)]
-      --print(reg_corr:size())
       reg_corr:resize((reg_corr:size(1) /  4), 4)
       table.insert(crit_corr, reg_corr)
-      --print('Regression')
-      err_reg = temp:forward(reg_out, reg_corr)
-      grad_reg = temp:backward(reg_out, reg_corr) 
-      --print(torch.max(grad_reg))
+      e_reg = crit2:forward(reg_out, reg_corr)
+      
+      --print(reg_out:cat(reg_corr,2))
       
       -- positive confidence
-      --print('conf')
       local conf_pos_out = outputs[positive_indexes:eq(4)]
-      table.insert(crit_out, conf_pos_out) 
-      
+      table.insert(crit_out, conf_pos_out)       
       local conf_pos_corr = correct_outputs[positive_indexes:eq(4)]
       table.insert(crit_corr, conf_pos_corr)
-      --print('Confidence')
-      err_conf = temp:forward(conf_pos_out, conf_pos_corr)
-      grad_conf = temp:backward(conf_pos_out, conf_pos_corr)
-      --print(torch.max(grad_conf))
-      
-      --negative confidence
-      --print('neg')
+      e_conf = crit3:forward(conf_pos_out, conf_pos_corr)
+
+      -- negative confidence
       local conf_neg_out = outputs[positive_indexes:eq(2)]
-      table.insert(crit_out, conf_neg_out) 
-      
+      table.insert(crit_out, conf_neg_out)      
       local conf_neg_corr = correct_outputs[positive_indexes:eq(2)]
       table.insert(crit_corr, conf_neg_corr)
-      --print('negative confidence')
-      err_neg = temp:forward(conf_neg_out, conf_neg_corr)
-      grad_neg = temp:backward(conf_neg_out, conf_neg_corr)
-      --print(torch.max(grad_neg))
+      e_neg = crit4:forward(conf_neg_out, conf_neg_corr)
       
-      train_reg_accuracy = train_reg_accuracy + torch.mean(conf_pos_corr) / opt.batchSize
+      train_reg_accuracy = train_reg_accuracy + torch.mean(conf_pos_corr)
       err = criterion:forward(crit_out, crit_corr)
       local gradOut = criterion:backward(crit_out, crit_corr)
       
       -- transform gradOutput back to original size
       gradOutputs:resize(outputs:size()):fill(0)
       
-      --print(torch.max(gradOut[1]))
+      --print(positive_indexes:size())
+      --print(gradOutputs:size())
+      --print(gradOut)
+      --print(torch.sum(positive_indexes:eq(1)))
+      --print(torch.sum(positive_indexes:eq(2)))
+      --print(torch.sum(positive_indexes:eq(3)))
+      --print(torch.sum(positive_indexes:eq(4)))
+      
       gradOutputs[positive_indexes:eq(1)] = gradOut[1]
-      --print(torch.max(gradOut[2]))
-      gradOutputs[positive_indexes:eq(3)]:copy(gradOut[2])
-      --print(torch.max(gradOut[3]))
+      gradOutputs[positive_indexes:eq(3)] = gradOut[2]
       gradOutputs[positive_indexes:eq(4)] = gradOut[3]
-      --print(torch.max(gradOut[4]))
       gradOutputs[positive_indexes:eq(2)] = gradOut[4]
       
-      
-      
-      --print('MAX/MIN GRAD')
-      --print(torch.max(gradOutputs))
-      --print(torch.min(gradOutputs))
-      
       model:backward(inputs, gradOutputs)
-      gradParameters:div(opt.batchSize)
+      
       return err, gradParameters
    end
    optim.sgd(feval, parameters, optimState)
@@ -341,7 +309,8 @@ function trainBatch(imageCPU, correction)
          
       -- add mean to image
       list_ims[i] = img_from_mean(list_ims[i], image_mean)
-
+      
+      list_ims[i]:mul(255)
       local im_size = torch.Tensor{ list_ims[i]:size(2),  list_ims[i]:size(3)}
       local gt = gt_boxes[i]
       local pos_ex_boxes = ex_boxes[i]
