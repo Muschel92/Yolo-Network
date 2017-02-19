@@ -43,9 +43,15 @@ print('Loaded data')
 paths.dofile('donkey.lua')
 paths.dofile('logger.lua')
 paths.dofile('calc_correct_output.lua')
-paths.dofile('train.lua')
-paths.dofile('validate.lua')
-paths.dofile('test_output.lua')
+
+if opt.crossEntropy then
+  paths.dofile('train_cec.lua')
+else
+  paths.dofile('train.lua')
+end
+
+--paths.dofile('validate.lua')
+--paths.dofile('test_output.lua')
 --paths.dofile('test.lua')
 
 epoch = opt.epochNumber

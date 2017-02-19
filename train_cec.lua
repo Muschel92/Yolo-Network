@@ -38,14 +38,18 @@ local function paramsForEpoch(epoch)
     end
     local regimes = {
         -- start, end,    LR,   WD,
-        {  1,     10000,   1e-4,   5e-4 },
-        { 10001,     15000,   5e-5,   5e-4  },
-        { 15001,     20000,   1e-5,   5e-4  },
+        {  1,     5000,   1e-4,   5e-4 },
+        { 5001,     10000,   5e-5,   5e-4  },
+        { 10001,     20000,   1e-5,   5e-4  },
         { 3000,     5000,   1e-3,   5e-4  },
         { 5001,     10000,   1e-2,   5e-4  },
         { 10001,     14000,   1e-3,   5e-4  },
         { 290190,     1000000,   1e-4,   5e-4  },
         { 306310,     1000000,   1e-4,   5e-4 },
+       -- { 4,     4,   5e-3,   5e-4 },
+        --{ ,     500,   1e-2,   5e-4 },
+        { 501,    750,   1e-3,   5e-4 },
+        { 751,    1000,   1e-4,   5e-4 },
     }
 
     for _, row in ipairs(regimes) do
@@ -124,7 +128,7 @@ function train()
       
     end
     
-    local im, correction = loadTrainBatch()     
+    local im, correction = loadTrainBatch_cec()     
     trainBatch(im, correction)
     
    end 
@@ -209,15 +213,16 @@ function trainBatch(imageCPU, correction)
       -- for every image in batch
       for i =1, #correction do
         numImages = numImages + 1
-        local temp1, temp2, temp3, temp4 = calculate_correct_output(outputs[i]:float(), correction[i]) 
+        local temp1, temp2, temp3, temp4 = calculate_correct_output_cec(outputs[i]:float(), correction[i]) 
         --print(torch.sum(temp3:eq(3)))
         outputs[i]:copy(temp1:cuda())
         correct_outputs[i]:copy(temp2:cuda())
         positive_indexes[i]:copy(temp3:cuda())
-        --labels_output[i]:copy(correction[i][7]:cuda())
+        labels_output[i]:copy(correction[i][7]:cuda())
+        
+        -- calculate batch accuracys
         batch_class_accuracy = batch_class_accuracy + classification
         batch_confidence_accuracy = batch_confidence_accuracy + confidence
-        --print(torch.sum(positive_indexes:eq(3)))
         
         if numImages <= 12 then
           table.insert(ex_boxes, temp4)
@@ -237,12 +242,11 @@ function trainBatch(imageCPU, correction)
       local labels_out = outputs[positive_indexes:eq(1)]
       labels_out:resize(opt.batchSize, opt.grid_size[1] , opt.grid_size[2] , opt.nClasses)
       --print(labels_out:size())
-      --labels_out = labels_out:permute(1,4,2,3):contiguous()
+      labels_out = labels_out:permute(1,4,2,3):contiguous()
       table.insert(crit_out, labels_out)      
-      local labels_corr = correct_outputs[positive_indexes:eq(1)]
-      labels_corr:resize(opt.batchSize, opt.grid_size[1] * opt.grid_size[2] , opt.nClasses)
-      table.insert(crit_corr, labels_corr)
-      e_class = crit1:forward(labels_out, labels_corr)
+      --local labels_corr = correct_outputs[positive_indexes:eq(1)]
+      table.insert(crit_corr, labels_output)
+      e_class = crit1:forward(labels_out, labels_output)
       
       -- regression
       local reg_out = outputs[positive_indexes:eq(3)]

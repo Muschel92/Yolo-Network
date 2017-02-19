@@ -50,17 +50,23 @@ end
 criterion = nn.ParallelCriterion()
 
 --Labels
---local weights = torch.Tensor(opt.nClasses):fill(1)
---crit1 = cudnn.SpatialCrossEntropyCriterion(weights)
---criterion:add(crit1, opt.class_loss)
-
-crit1 = nn.MSECriterion()
+if opt.crossEntropy then
+  local weights = torch.Tensor(opt.nClasses):fill(1)
+  crit1 = cudnn.SpatialCrossEntropyCriterion(weights)
+else
+  crit1 = nn.MSECriterion()
+end 
+--crit1 = nn.MSECriterion()
 --crit1.sizeAverage = false
 criterion:add(crit1, opt.class_loss)
 
 --Regression
 --crit2 = nn.SmoothL1Criterion()
-crit2 = nn.MSECriterion()
+if opt.smoothL1 then
+  crit2 = nn.SmoothL1Criterion()
+else
+  crit2 = nn.MSECriterion()
+end 
 --crit2.sizeAverage = false
 criterion:add(crit2, opt.reg_loss)
 

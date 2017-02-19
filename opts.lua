@@ -45,7 +45,9 @@ function M.parse(arg)
     cmd:option('-weightDecay',     5e-4, 'weight decay')
     
     ---------- Loss Options -----------------------------------
-    cmd:option('-reg_loss',     5, 'weight for regression loss')
+    cmd:option('-smoothL1',     true, 'use smoothL1 loss instead of MSECriterion for regression')
+    cmd:option('-crossEntropy',     true, 'use crossEntropy loss instead of MSECriterion for classification')
+    cmd:option('-reg_loss',     10, 'weight for regression loss')
     cmd:option('-conf_loss',     1, 'weight for confidence loss')
     cmd:option('-neg_loss',     0.5, 'weight for negative confidence loss')
     cmd:option('-class_loss',     1, 'weight for classification loss')

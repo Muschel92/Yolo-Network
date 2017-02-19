@@ -138,6 +138,35 @@ function loadTrainBatch()
     return batch, bbox_targets
 end
 
+function loadTrainBatch_cec()
+
+    if counter > #indices then
+      indices = torch.randperm(#image_roidb_train):long():split(opt.batchSize)
+   
+      if (#image_roidb_train % opt.batchSize ~= 0) then
+        indices[#indices] = nil
+      end
+
+      counter = 1
+    end
+    
+    -- get next batch roidbs
+    local roidbs = generate_batch_roidbs(indices[counter], image_roidb_train) 
+    
+    -- calculate next batch    
+    local batch = torch.Tensor(#roidbs, 3, opt.imageSize[1], opt.imageSize[2])
+    local bbox_targets = {}
+    
+    for i = 1,#roidbs do
+      local img, correction = trainHook_cec(roidbs[i])
+      table.insert(bbox_targets, correction)
+      batch[i] = img
+    end
+    counter = counter + 1
+    
+    return batch, bbox_targets
+end
+
 function trainHook (roidb)
    collectgarbage()
    
@@ -212,6 +241,90 @@ function trainHook (roidb)
    table.insert(correction, grid_x)
    -- 6) The grid_y of pos_box i
    table.insert(correction, grid_y)
+   
+   return out, correction
+end
+
+function trainHook_cec (roidb)
+   collectgarbage()
+   
+   local out, rois = random_crop(roidb.path, roidb.size:clone(), opt.imageSize:clone(), roidb.boxes:clone())
+
+
+   -- index for all positive boxes 
+   local pos_boxes = torch.Tensor(opt.grid_size[1], opt.grid_size[2], 2):fill(0)
+   local labels = torch.Tensor(opt.grid_size[1], opt.grid_size[2], opt.nClasses):fill(0)
+   labels[{{},{},{}}] = 3
+   local loss_labels = torch.Tensor(opt.grid_size[1], opt.grid_size[2]):fill(1)
+   
+   -- do hflip with probability 0.5
+    if torch.uniform() > 0.5 then 
+      out = image.hflip(out) 
+      rois = flip_rois(rois, opt.imageSize)
+    end
+    
+    -- calculate height and width
+    local height = rois[{{},3}] - rois[{{},1}]
+    local width = rois[{{},4}] - rois[{{},2}]
+
+    -- calculate center point
+    local c_x = rois[{{},1}] + torch.div(height, 2)
+    local c_y = rois[{{},2}] + torch.div(width, 2)
+
+    local grid_size = torch.cdiv(opt.imageSize, opt.grid_size)
+
+    -- get the grid cell of boxes
+    local grid_x = torch.div(c_x, grid_size[1])
+    local grid_y = torch.div(c_y, grid_size[2])
+
+    -- calculate the bbox targets for every gt_box
+    local bbox_targets = torch.Tensor(rois:size(1), 5)
+    
+    -- label
+    bbox_targets[{{}, 1}]:copy(roidb.labels)
+
+    -- grid offset to center
+    bbox_targets[{{}, 2}] = (grid_x - torch.floor(grid_x))
+    bbox_targets[{{}, 3}] = (grid_y - torch.floor(grid_y))
+
+    -- height and width normalized to image size and sqrt(w/h)
+    bbox_targets[{{}, 4}] = torch.div(height, opt.imageSize[1]):sqrt()
+    bbox_targets[{{}, 5}] = torch.div(width, opt.imageSize[2]):sqrt()
+    
+    grid_x:ceil()
+    grid_y:ceil()
+    
+    -- mark all the positive boxes / one box possible for every cell
+    for i = 1, bbox_targets:size(1) do
+      if pos_boxes[grid_x[i]][grid_y[i]][1] ~= 0 then
+        pos_boxes[grid_x[i]][grid_y[i]][2] = i
+      else
+        pos_boxes[grid_x[i]][grid_y[i]][1] = i
+      end           
+      labels[grid_x[i]][grid_y[i]]:fill(2)
+      labels[grid_x[i]][grid_y[i]][bbox_targets[{i, 1}]] = 1
+      
+      loss_labels[grid_x[i]][grid_y[i]] = bbox_targets[{i, 1}]
+      
+    end
+    
+   
+   local correction = {}
+   
+   -- 1) the bbox_targets
+   table.insert(correction, bbox_targets)
+   -- 2) the actual rois
+   table.insert(correction, rois)
+   -- 3) the position of the positive boxes
+   table.insert(correction, pos_boxes)
+   -- 4) the labels and their position
+   table.insert(correction, labels)
+   -- 5) The grid_x of pos_box i
+   table.insert(correction, grid_x)
+   -- 6) The grid_y of pos_box i
+   table.insert(correction, grid_y)
+   -- 7) labels for loss
+   table.insert(correction, loss_labels)
    
    return out, correction
 end
